@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Silverhaven Chronicles</title>
+    <style>
+        /* --- CSS STYLING --- */
+        body { font-family: 'Courier New', monospace; background: #1a1a1a; color: #e0e0e0; display: flex; height: 100vh; margin: 0; overflow: hidden; }
+        
+        /* Layout Grid */
+        .container { display: grid; grid-template-columns: 250px 1fr 250px; width: 100%; gap: 10px; padding: 10px; }
+        
+        /* Panels */
+        .panel { background: #2b2b2b; border: 1px solid #444; padding: 10px; overflow-y: auto; }
+        .header { font-weight: bold; color: #ffd700; border-bottom: 1px solid #555; margin-bottom: 10px; padding-bottom: 5px; }
+        
+        /* Stats & Skills */
+        .stat-row { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 14px; }
+        .skill-row { margin-bottom: 5px; }
+        .progress-bar { background: #444; height: 6px; width: 100%; margin-top: 2px; }
+        .progress-fill { background: #4caf50; height: 100%; width: 0%; transition: width 0.3s; }
+
+        /* Game Log */
+        #game-log { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 14px; }
+        .log-entry { margin-bottom: 6px; border-bottom: 1px solid #333; padding-bottom: 2px; }
+        .log-time { color: #888; font-size: 12px; margin-right: 5px; }
+        .log-combat { color: #ff6b6b; }
+        .log-item { color: #4ecdc4; }
+
+        /* Action Buttons */
+        button { background: #444; color: white; border: 1px solid #555; padding: 8px; width: 100%; cursor: pointer; margin-bottom: 5px; text-align: left; }
+        button:hover { background: #555; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .location-tag { font-size: 12px; color: #aaa; margin-bottom: 10px; text-align: center; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <!-- LEFT PANEL: PLAYER STATS & SKILLS -->
+    <div class="panel" id="left-panel">
+        <div class="header">Character</div>
+        <div id="stats-container"></div>
+        <div class="header" style="margin-top: 20px;">Skills</div>
+        <div id="skills-container"></div>
+    </div>
+
+    <!-- CENTER PANEL: GAME LOG & EVENTS -->
+    <div class="panel" id="center-panel">
+        <div class="header" id="clock-display">Day 1 - 08:00 Monday</div>
+        <div class="location-tag" id="location-display">Location: Silverhaven</div>
+        <div id="game-log"></div>
+    </div>
+
+    <!-- RIGHT PANEL: ACTIONS & INVENTORY -->
+    <div class="panel" id="right-panel">
+        <div class="header">Actions</div>
+        <div id="actions-container"></div>
+        <div class="header" style="margin-top: 20px;">Inventory</div>
+        <div id="inventory-container">Empty</div>
+    </div>
+</div>
+
+<script>
+/* --- GAME CONFIGURATION & DATA --- */
+const SKILL_LIST = [
+    "One-Handed", "Elementalism", "Survival", "Alchemy" 
+    // (Shortened list for demo, add the rest here)
+];
+
+const LOCATIONS = {
+    CITY: "Silverhaven",
+    FOREST: "Whisperwood Forest"
+};
+
+/* --- CORE CLASSES --- */
+
+class TimeSystem {
+    constructor() {
+        this.minute = 0;
+        this.hour = 8; // Start at 8 AM
+        this.day = 1;
+        this.dayIndex = 0; // 0 = Monday
+        this.daysOfWeek = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+    }
+
+    advance(minutes) {
+        this.minute += minutes;
+        while (this.minute >= 60) {
+            this.minute -= 60;
+            this.hour++;
+        }
+        while (this.hour >= 24) {
+            this.hour -= 24;
+            this.day++;
+            this.dayIndex = (this.dayIndex + 1) % 7;
+            ui.log("A new day dawns.", "normal");
+        }
+        ui.updateClock();
+    }
+
+    getFormatted() {
+        const h = this.hour.toString().padStart(2, '0');
+        const m = this.minute.toString().padStart(2, '0');
+        return `Day ${this.day} - ${h}:${m} ${this.daysOfWeek[this.dayIndex]}`;
+    }
+}
+
+class Player {
+    constructor() {
+        // 1. Base Stats
+        this.baseStats = { STR: 10, END: 10, WIL: 10, AGI: 10, INT: 10, MAG: 10 };
+        // 2. Actual Stats (Base + Mods)
+        this.actualStats = { ...this.baseStats };
+        
+        this.hp = 100;
+        this.mp = 100;
+        this.level = 1;
+        this.xp = 0;
+        
+        // 3. Skills
+        this.skills = {};
+        SKILL_LIST.forEach(s => {
+            this.skills[s] = { level: 1, xp: 0, xpToNext: 100 };
+        });
+
+        this.inventory = [];
+    }
+
+    recalculateStats() {
+        // Reset to base
+        this.actualStats = { ...this.baseStats };
+        
+        // TODO: Loop through equipment/buffs and add to actualStats here
+        
+        // Update Derived Caps
+        const maxHP = this.actualStats.END * 10;
+        const maxMP = this.actualStats.MAG * 10;
+        
+        if (this.hp > maxHP) this.hp = maxHP;
+        if (this.mp > maxMP) this.mp = maxMP;
+        
+        ui.updateStats();
+    }
+
+    gainSkillXP(skillName, amount) {
+        const skill = this.skills[skillName];
+        skill.xp += amount;
+        ui.log(`Gained ${amount} XP in ${skillName}.`);
+        
+        if (skill.xp >= skill.xpToNext) {
+            skill.level++;
+            skill.xp -= skill.xpToNext;
+            skill.xpToNext = Math.floor(skill.xpToNext * 1.2); // Simple curve
+            ui.log(`<b>${skillName} increased to level ${skill.level}!</b>`, "highlight");
+        }
+        ui.updateSkills();
+    }
+}
+
+class Game {
+    constructor() {
+        this.player = new Player();
+        this.time = new TimeSystem();
+        this.location = LOCATIONS.CITY;
+        this.isBusy = false;
+    }
+
+    // Core Action Runner
+    performAction(actionName, durationMinutes, callback) {
+        if (this.isBusy) return;
+        
+        this.isBusy = true;
+        ui.renderActions(); // Disable buttons
+        
+        // Simulate time passing instantly for text RPG feel, 
+        // or use setTimeout for real-time feel. Let's do instant for now.
+        this.time.advance(durationMinutes);
+        
+        callback();
+        
+        this.isBusy = false;
+        ui.renderActions(); // Re-enable
+    }
+
+    travel(destination, minutes) {
+        this.performAction(`Travel to ${destination}`, minutes, () => {
+            this.location = destination;
+            ui.log(`You traveled to ${destination}.`);
+            ui.updateLocation();
+        });
+    }
+
+    forage() {
+        this.performAction("Foraging", 5, () => {
+            this.player.gainSkillXP("Survival", 10);
+            
+            const roll = Math.random();
+            if (roll < 0.60) {
+                ui.log("You found a Whisperwood Branch!", "item");
+                this.player.inventory.push("Whisperwood Branch");
+                ui.updateInventory();
+            } else if (roll < 0.85) {
+                ui.log("You searched but found nothing.");
+            } else {
+                ui.log("You hear a rustle... A Goblin appears!", "combat");
+                // Trigger combat logic here
+                this.startCombat();
+            }
+        });
+    }
+    
+    rest() {
+        this.performAction("Resting at Inn", 480, () => { // 8 hours
+            this.player.hp = this.player.actualStats.END * 10;
+            this.player.mp = this.player.actualStats.MAG * 10;
+            ui.log("You feel well rested. HP and MP restored.");
+            ui.updateStats();
+        });
+    }
+
+    // Simplified Combat Stub
+    startCombat() {
+        ui.log("Combat started! (Placeholder logic - You swing your sword).", "combat");
+        this.player.gainSkillXP("One-Handed", 15);
+        // In a full implementation, this would enter a combat state loop
+    }
+}
+
+/* --- UI MANAGER --- */
+const ui = {
+    logEl: document.getElementById('game-log'),
+    
+    log: (msg, type="normal") => {
+        const div = document.createElement('div');
+        div.className = `log-entry log-${type}`;
+        div.innerHTML = `<span class="log-time">[${game.time.getFormatted().split(' ')[3]}]</span> ${msg}`;
+        ui.logEl.prepend(div);
+    },
+
+    updateClock: () => {
+        document.getElementById('clock-display').innerText = game.time.getFormatted();
+    },
+
+    updateLocation: () => {
+        document.getElementById('location-display').innerText = `Location: ${game.location}`;
+    },
+
+    updateStats: () => {
+        const p = game.player;
+        let html = `
+            <div class="stat-row"><span>HP</span> <span>${p.hp} / ${p.actualStats.END * 10}</span></div>
+            <div class="stat-row"><span>MP</span> <span>${p.mp} / ${p.actualStats.MAG * 10}</span></div>
+            <hr style="border-color:#444">
+        `;
+        for (let [key, val] of Object.entries(p.actualStats)) {
+            html += `<div class="stat-row"><span>${key}</span> <span style="color:${val > p.baseStats[key] ? '#4caf50' : '#fff'}">${val}</span></div>`;
+        }
+        document.getElementById('stats-container').innerHTML = html;
+    },
+
+    updateSkills: () => {
+        let html = '';
+        for (let [name, data] of Object.entries(game.player.skills)) {
+            const pct = (data.xp / data.xpToNext) * 100;
+            html += `
+                <div class="skill-row">
+                    <div class="stat-row"><span>${name}</span> <span>Lv ${data.level}</span></div>
+                    <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+                </div>
+            `;
+        }
+        document.getElementById('skills-container').innerHTML = html;
+    },
+    
+    updateInventory: () => {
+        const inv = game.player.inventory;
+        if(inv.length === 0) {
+            document.getElementById('inventory-container').innerText = "Empty";
+            return;
+        }
+        document.getElementById('inventory-container').innerHTML = inv.map(i => `<div>${i}</div>`).join('');
+    },
+
+    renderActions: () => {
+        const container = document.getElementById('actions-container');
+        container.innerHTML = '';
+
+        if (game.location === LOCATIONS.CITY) {
+            container.appendChild(createBtn("Rest at Inn (10g) - 8h", () => game.rest()));
+            container.appendChild(createBtn("Travel to Whisperwood (30m)", () => game.travel(LOCATIONS.FOREST, 30)));
+            container.appendChild(createBtn("Visit Church (Sunday Only)", () => ui.log("The doors are locked."), game.time.dayIndex !== 6));
+        } else if (game.location === LOCATIONS.FOREST) {
+            container.appendChild(createBtn("Forage for Resources (5m)", () => game.forage()));
+            container.appendChild(createBtn("Return to Silverhaven (30m)", () => game.travel(LOCATIONS.CITY, 30)));
+        }
+    }
+};
+
+function createBtn(text, onClick, disabled=false) {
+    const btn = document.createElement('button');
+    btn.innerText = text;
+    btn.onclick = onClick;
+    if (disabled || game.isBusy) btn.disabled = true;
+    return btn;
+}
+
+/* --- INITIALIZATION --- */
+const game = new Game();
+
+// Initial Render
+ui.updateClock();
+ui.updateStats();
+ui.updateSkills();
+ui.renderActions();
+ui.log("Welcome to Silverhaven Chronicles.");
+
+</script>
+</body>
+</html>
